@@ -3048,25 +3048,20 @@ function file_is_svg_image_from_mimetype(string $mimetype): bool {
  */
 function get_moodle_proxy_url() {
     global $CFG;
-    $proxy = '';
-    if (empty($CFG->proxytype)) {
-        return $proxy;
-    }
-    if (empty($CFG->proxyhost)) {
-        return $proxy;
-    }
-    if ($CFG->proxytype === 'SOCKS5') {
-        // If it is a SOCKS proxy, append the protocol info.
-        $protocol = 'socks5://';
-    } else {
-        $protocol = '';
+    if (empty($CFG->proxytype) || empty($CFG->proxyhost)) {
+        return '';
     }
     $proxy = $CFG->proxyhost;
     if (!empty($CFG->proxyport)) {
-        $proxy .= ':'. $CFG->proxyport;
+        $proxy .= ':' . $CFG->proxyport;
     }
     if (!empty($CFG->proxyuser) && !empty($CFG->proxypassword)) {
-        $proxy = $protocol . $CFG->proxyuser . ':' . $CFG->proxypassword . '@' . $proxy;
+        // Encode the credentials, so that characters such as '@', ':' and '/' can't be mistaken for URL delimiters.
+        $proxy = rawurlencode($CFG->proxyuser) . ':' . rawurlencode($CFG->proxypassword) . '@' . $proxy;
+    }
+    if ($CFG->proxytype === 'SOCKS5') {
+        // If it is a SOCKS proxy, prepend the scheme, with or without credentials.
+        $proxy = 'socks5://' . $proxy;
     }
     return $proxy;
 }

@@ -49,6 +49,7 @@ require_once($CFG->dirroot . '/repository/lib.php');
 #[\PHPUnit\Framework\Attributes\CoversFunction('file_prepare_standard_editor')]
 #[\PHPUnit\Framework\Attributes\CoversFunction('readfile_accel')]
 #[\PHPUnit\Framework\Attributes\CoversMethod(\curl::class, 'removeopt')]
+#[CoversFunction('get_moodle_proxy_url')]
 final class filelib_test extends \advanced_testcase {
     public function test_format_postdata_for_curlcall(): void {
 
@@ -500,6 +501,63 @@ final class filelib_test extends \advanced_testcase {
         $this->assertSame(0, $curl->get_errno());
         $this->assertSame(1, $curl->info['redirect_count']);
         $this->assertSame('done', $contents);
+    }
+
+    /**
+     * Data provider for {@see test_get_moodle_proxy_url}.
+     *
+     * @return array
+     */
+    public static function get_moodle_proxy_url_provider(): array {
+        return [
+            'No proxy type' => ['', 'proxy.example.org', 1080, '', '', ''],
+            'No proxy host' => ['HTTP', '', 1080, '', '', ''],
+            'HTTP, no port' => ['HTTP', 'proxy.example.org', 0, '', '', 'proxy.example.org'],
+            'HTTP, no credentials' => ['HTTP', 'proxy.example.org', 1080, '', '', 'proxy.example.org:1080'],
+            'HTTP, credentials' => ['HTTP', 'proxy.example.org', 1080, 'ann', 'secret', 'ann:secret@proxy.example.org:1080'],
+            'HTTP, user name only' => ['HTTP', 'proxy.example.org', 1080, 'ann', '', 'proxy.example.org:1080'],
+            'HTTP, credentials with URL delimiters' => [
+                'HTTP', 'proxy.example.org', 1080, 'ann@corp', 'p@ss:w/rd', 'ann%40corp:p%40ss%3Aw%2Frd@proxy.example.org:1080',
+            ],
+            'SOCKS5, no credentials' => ['SOCKS5', 'proxy.example.org', 1080, '', '', 'socks5://proxy.example.org:1080'],
+            'SOCKS5, credentials' => [
+                'SOCKS5', 'proxy.example.org', 1080, 'ann', 'secret', 'socks5://ann:secret@proxy.example.org:1080',
+            ],
+            'SOCKS5, credentials with URL delimiters' => [
+                'SOCKS5', 'proxy.example.org', 1080, 'ann', 'p@ss:word', 'socks5://ann:p%40ss%3Aword@proxy.example.org:1080',
+            ],
+        ];
+    }
+
+    /**
+     * Test that get_moodle_proxy_url() builds the proxy URL from the proxy settings.
+     *
+     * @param string $type proxy type setting
+     * @param string $host proxy host setting
+     * @param int $port proxy port setting
+     * @param string $user proxy user name setting
+     * @param string $password proxy password setting
+     * @param string $expected expected proxy URL
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('get_moodle_proxy_url_provider')]
+    public function test_get_moodle_proxy_url(
+        string $type,
+        string $host,
+        int $port,
+        string $user,
+        string $password,
+        string $expected,
+    ): void {
+        global $CFG;
+        $this->resetAfterTest();
+
+        $CFG->proxytype = $type;
+        $CFG->proxyhost = $host;
+        $CFG->proxyport = $port;
+        $CFG->proxyuser = $user;
+        $CFG->proxypassword = $password;
+
+        $this->assertSame($expected, get_moodle_proxy_url());
     }
 
     public function test_curl_proxybypass(): void {
