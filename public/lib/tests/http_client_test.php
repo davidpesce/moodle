@@ -34,6 +34,7 @@ use GuzzleHttp\Psr7\Uri;
 #[\PHPUnit\Framework\Attributes\CoversClass(\core\http_client::class)]
 #[\PHPUnit\Framework\Attributes\CoversClass(\core\local\guzzle\check_request::class)]
 #[\PHPUnit\Framework\Attributes\CoversClass(\core\local\guzzle\redirect_middleware::class)]
+#[\PHPUnit\Framework\Attributes\CoversClass(\core\local\guzzle\proxy_bypass::class)]
 #[\PHPUnit\Framework\Attributes\CoversClass(\core\local\guzzle\cache_item::class)]
 #[\PHPUnit\Framework\Attributes\CoversClass(\core\local\guzzle\cache_handler::class)]
 #[\PHPUnit\Framework\Attributes\CoversClass(\core\local\guzzle\cache_storage::class)]
@@ -234,6 +235,96 @@ final class http_client_test extends \advanced_testcase {
         $response = $client->get($testurl);
 
         $this->assertSame('99914b932bd37a50b983c5e7c90ae93b', md5(json_encode($response)));
+    }
+
+    /**
+     * Data provider for {@see test_http_client_proxy_bypass_patterns}.
+     *
+     * @return array
+     */
+    public static function proxy_bypass_patterns_provider(): array {
+        return [
+            'IP in CIDR range' => ['http://192.168.1.20/', true],
+            'IP in last-group range' => ['http://10.1.1.15/', true],
+            'IP outside last-group range' => ['http://10.1.1.21/', false],
+            'Partial IP' => ['http://172.16.5.4/', true],
+            'Wildcard domain' => ['https://lrs.example.org/', true],
+            'Exact host' => ['https://lrs.example.net/', true],
+            'Host not in list' => ['https://example.com/', false],
+        ];
+    }
+
+    /**
+     * Test that the proxy is bypassed for every pattern that is_proxybypass() accepts.
+     *
+     * @param string $url The URL to request
+     * @param bool $bypass Whether the proxy should be bypassed
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('proxy_bypass_patterns_provider')]
+    public function test_http_client_proxy_bypass_patterns(string $url, bool $bypass): void {
+        global $CFG;
+        $this->resetAfterTest();
+
+        $CFG->proxyhost = 'proxy.example.org';
+        $CFG->proxyport = 3128;
+        $CFG->proxybypass = '192.168.0.0/16,10.1.1.1-20,172.16.,*.example.org,lrs.example.net';
+
+        $mock = new MockHandler([new Response()]);
+        $client = new \core\http_client(['mock' => $mock, 'ignoresecurity' => true]);
+        $client->get($url);
+
+        $this->assertSame($bypass, is_proxybypass($url));
+        if ($bypass) {
+            // An empty proxy, not a missing one, so that curl doesn't fall back to a proxy from the environment.
+            $this->assertSame('', $mock->getLastOptions()['proxy']);
+        } else {
+            $this->assertSame('http://proxy.example.org:3128', $mock->getLastOptions()['proxy']['https']);
+        }
+    }
+
+    /**
+     * Test that the proxy bypass list is applied to every redirect.
+     */
+    public function test_http_client_proxy_bypass_on_redirect(): void {
+        global $CFG;
+        $this->resetAfterTest();
+
+        $CFG->proxyhost = 'proxy.example.org';
+        $CFG->proxybypass = '192.168.0.0/16';
+
+        $mock = new MockHandler([
+            function ($request, $options) {
+                // The first hop is not in the bypass list, so it goes through the proxy.
+                $this->assertSame('http://proxy.example.org', $options['proxy']['https']);
+                return new Response(302, ['Location' => 'http://192.168.1.20/']);
+            },
+            new Response(200),
+        ]);
+        $client = new \core\http_client(['mock' => $mock, 'ignoresecurity' => true]);
+        $client->get('https://example.com/');
+
+        $this->assertSame('http://192.168.1.20/', (string) $mock->getLastRequest()->getUri());
+        $this->assertSame('', $mock->getLastOptions()['proxy']);
+    }
+
+    /**
+     * Test that the proxy bypass list also applies to a proxy given for a single request.
+     */
+    public function test_http_client_proxy_bypass_request_proxy(): void {
+        global $CFG;
+        $this->resetAfterTest();
+
+        $CFG->proxyhost = 'proxy.example.org';
+        $CFG->proxybypass = '192.168.0.0/16';
+
+        $mock = new MockHandler([new Response(), new Response()]);
+        $client = new \core\http_client(['mock' => $mock, 'ignoresecurity' => true]);
+        $client->get('http://192.168.1.20/', ['proxy' => 'http://other.example.org:8080']);
+
+        $this->assertSame('', $mock->getLastOptions()['proxy']);
+
+        $client->get('https://example.com/', ['proxy' => 'http://other.example.org:8080']);
+        $this->assertSame('http://other.example.org:8080', $mock->getLastOptions()['proxy']);
     }
 
     /**

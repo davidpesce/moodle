@@ -19,6 +19,7 @@ namespace core;
 use core\local\guzzle\cache_handler;
 use core\local\guzzle\cache_storage;
 use core\local\guzzle\check_request;
+use core\local\guzzle\proxy_bypass;
 use core\local\guzzle\redirect_middleware;
 use GuzzleHttp\Client;
 use GuzzleHttp\HandlerStack;
@@ -104,6 +105,10 @@ class http_client extends Client {
         // It extends the standard 'allow_redirects' handler so supports the same options.
         $stack->after('allow_redirects', redirect_middleware::setup($settings), 'moodle_allow_redirect');
         $stack->remove('allow_redirects');
+
+        // Apply the full proxy bypass list, as the curl class does. Guzzle's own 'no' proxy option only
+        // matches host names and domain suffixes. This sits inside the redirect handler, so it checks every hop.
+        $stack->push(proxy_bypass::setup(), 'moodle_proxy_bypass');
 
         // Use cache middleware if cache is enabled.
         if (!empty($settings['cache'])) {
